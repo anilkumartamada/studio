@@ -23,13 +23,10 @@ import {
   Target,
   Link as LinkIcon,
 } from "lucide-react";
-import { addProductToSheet } from '@/ai/flows/addProductToSheetFlow';
+import { sendProductDataToWebhook } from '@/ai/flows/sendProductDataToWebhookFlow';
 
-interface ProductFormProps {
-  sheetUrl: string;
-}
 
-export function ProductForm({ sheetUrl }: ProductFormProps) {
+export function ProductForm() {
   const { toast } = useToast();
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
@@ -42,21 +39,21 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
   });
 
   async function onSubmit(values: ProductFormValues) {
-    form.clearErrors(); // Clear previous errors
+    form.clearErrors(); 
     try {
-      const result = await addProductToSheet({ ...values, sheetUrl });
+      const result = await sendProductDataToWebhook(values);
 
       if (result.success) {
         toast({
           title: "Success!",
-          description: result.message || "Product data submitted successfully.",
+          description: result.message || "Product data submitted successfully to webhook.",
           variant: "default",
         });
         form.reset();
       } else {
         toast({
           title: "Error Submitting Data",
-          description: result.message || "An unknown error occurred.",
+          description: result.message || "An unknown error occurred while sending to webhook.",
           variant: "destructive",
         });
       }
@@ -141,7 +138,7 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
         </div>
 
         <Button type="submit" className="w-full md:w-auto" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? "Submitting..." : "Add Product to Sheet"}
+          {form.formState.isSubmitting ? "Submitting..." : "Send Product Data"}
         </Button>
       </form>
     </Form>
