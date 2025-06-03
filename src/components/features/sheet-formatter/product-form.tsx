@@ -110,7 +110,7 @@ export function ProductForm() {
             name="targetPrice"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Target Price (USD)</FormLabel>
+                <FormLabel>Target Price (INR)</FormLabel>
                  <div className="relative">
                   <Target className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                   <FormControl>
