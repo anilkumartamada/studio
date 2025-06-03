@@ -20,7 +20,7 @@ const SendProductDataToWebhookOutputSchema = z.object({
 });
 export type SendProductDataToWebhookOutput = z.infer<typeof SendProductDataToWebhookOutputSchema>;
 
-const WEBHOOK_URL = "https://gen-ai-june6.app.n8n.cloud/webhook/b4632fe7-259f-46c2-87a3-6b9cd60d580c";
+const WEBHOOK_URL = "https://gen-ai-june6.app.n8n.cloud/webhook-test/b4632fe7-259f-46c2-87a3-6b9cd60d580c";
 
 export async function sendProductDataToWebhook(input: SendProductDataToWebhookInput): Promise<SendProductDataToWebhookOutput> {
   try {
@@ -49,3 +49,4 @@ export async function sendProductDataToWebhook(input: SendProductDataToWebhookIn
     return { success: false, message: errorMessage };
   }
 }
+
