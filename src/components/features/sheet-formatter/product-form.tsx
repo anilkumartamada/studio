@@ -34,8 +34,8 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
     defaultValues: {
       productId: "",
       productName: "",
-      currentPrice: undefined,
-      targetPrice: undefined,
+      currentPrice: '', // Changed from undefined
+      targetPrice: '',  // Changed from undefined
       productLink: "",
     },
   });
