@@ -13,36 +13,15 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { Textarea } from "@/components/ui/textarea";
-import { productSchema, type ProductFormValues, productStatusEnum } from "@/lib/schemas/product-schema";
+import { productSchema, type ProductFormValues } from "@/lib/schemas/product-schema";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
-import { format } from "date-fns";
 import {
-  CalendarIcon,
   DollarSign,
   Fingerprint,
   Package,
   Tags,
   Target,
-  CalendarDays,
-  FileText,
-  Activity,
   Link as LinkIcon,
-  AlertCircle,
 } from "lucide-react";
 
 interface ProductFormProps {
@@ -59,9 +38,6 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
       category: "",
       currentPrice: undefined,
       targetPrice: undefined,
-      monitoringStartDate: undefined,
-      notes: "",
-      status: "Monitoring",
       productLink: "",
     },
   });
@@ -169,74 +145,6 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name="monitoringStartDate"
-            render={({ field }) => (
-              <FormItem className="flex flex-col">
-                <FormLabel>Monitoring Start Date</FormLabel>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <FormControl>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full pl-3 text-left font-normal justify-start",
-                          !field.value && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarDays className="mr-2 h-5 w-5 text-muted-foreground" />
-                        {field.value ? (
-                          format(field.value, "PPP")
-                        ) : (
-                          <span>Pick a date</span>
-                        )}
-                      </Button>
-                    </FormControl>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={field.value}
-                      onSelect={field.onChange}
-                      disabled={(date) =>
-                        date > new Date() || date < new Date("1900-01-01")
-                      }
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="status"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Status</FormLabel>
-                <div className="relative">
-                   <Activity className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground z-10" />
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger className="pl-10">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {productStatusEnum.options.map((statusValue) => (
-                        <SelectItem key={statusValue} value={statusValue}>
-                          {statusValue}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
            <FormField
             control={form.control}
             name="productLink"
@@ -254,27 +162,6 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
             )}
           />
         </div>
-
-        <FormField
-          control={form.control}
-          name="notes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Notes</FormLabel>
-              <div className="relative">
-                 <FileText className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
-                <FormControl>
-                  <Textarea
-                    placeholder="Any additional notes about the product..."
-                    className="resize-none pl-10 pt-2"
-                    {...field}
-                  />
-                </FormControl>
-              </div>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
 
         <Button type="submit" className="w-full md:w-auto" disabled={form.formState.isSubmitting}>
           {form.formState.isSubmitting ? "Submitting..." : "Add Product to Sheet"}
