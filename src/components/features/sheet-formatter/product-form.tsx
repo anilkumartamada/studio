@@ -22,6 +22,7 @@ import {
   Package,
   Target,
   Link as LinkIcon,
+  Mail,
 } from "lucide-react";
 import { sendProductDataToWebhook } from '@/ai/flows/sendProductDataToWebhookFlow';
 
@@ -35,6 +36,7 @@ export function ProductForm() {
       productName: "",
       targetPrice: '',
       productLink: "",
+      email: "",
     },
   });
 
@@ -129,6 +131,22 @@ export function ProductForm() {
                   <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                   <FormControl>
                     <Input type="url" placeholder="https://example.com/product" {...field} className="pl-10" />
+                  </FormControl>
+                </div>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="email"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Email Address</FormLabel>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                  <FormControl>
+                    <Input type="email" placeholder="e.g., user@example.com" {...field} className="pl-10" />
                   </FormControl>
                 </div>
                 <FormMessage />
