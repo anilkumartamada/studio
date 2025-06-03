@@ -19,7 +19,6 @@ import {
   DollarSign,
   Fingerprint,
   Package,
-  Tags,
   Target,
   Link as LinkIcon,
 } from "lucide-react";
@@ -35,7 +34,6 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
     defaultValues: {
       productId: "",
       productName: "",
-      category: "",
       currentPrice: undefined,
       targetPrice: undefined,
       productLink: "",
@@ -91,22 +89,6 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
                   <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                   <FormControl>
                     <Input placeholder="e.g., Wireless Headphones" {...field} className="pl-10" />
-                  </FormControl>
-                </div>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="category"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Category</FormLabel>
-                <div className="relative">
-                  <Tags className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <FormControl>
-                    <Input placeholder="e.g., Electronics" {...field} className="pl-10" />
                   </FormControl>
                 </div>
                 <FormMessage />
