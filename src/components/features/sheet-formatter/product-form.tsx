@@ -1,3 +1,4 @@
+
 "use client";
 
 import type * as React from 'react';
@@ -22,6 +23,7 @@ import {
   Target,
   Link as LinkIcon,
 } from "lucide-react";
+import { addProductToSheet } from '@/ai/flows/addProductToSheetFlow';
 
 interface ProductFormProps {
   sheetUrl: string;
@@ -40,22 +42,32 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
   });
 
   async function onSubmit(values: ProductFormValues) {
-    // Simulate API call to submit data to Google Sheet
-    console.log("Form submitted with values:", values);
-    console.log("Target Google Sheet URL:", sheetUrl);
+    form.clearErrors(); // Clear previous errors
+    try {
+      const result = await addProductToSheet({ ...values, sheetUrl });
 
-    // Here you would typically make an API call to a backend
-    // that handles writing to the Google Sheet.
-    // For now, we'll just simulate success.
-
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-
-    toast({
-      title: "Success!",
-      description: "Product data submitted successfully.",
-      variant: "default",
-    });
-    form.reset();
+      if (result.success) {
+        toast({
+          title: "Success!",
+          description: result.message || "Product data submitted successfully.",
+          variant: "default",
+        });
+        form.reset();
+      } else {
+        toast({
+          title: "Error Submitting Data",
+          description: result.message || "An unknown error occurred.",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("Error in onSubmit:", error);
+      toast({
+        title: "Submission Failed",
+        description: error.message || "An unexpected error occurred while submitting the form.",
+        variant: "destructive",
+      });
+    }
   }
 
   return (
