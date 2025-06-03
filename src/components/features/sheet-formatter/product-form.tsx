@@ -34,8 +34,7 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
     defaultValues: {
       productId: "",
       productName: "",
-      currentPrice: '', // Changed from undefined
-      targetPrice: '',  // Changed from undefined
+      targetPrice: '',
       productLink: "",
     },
   });
@@ -89,22 +88,6 @@ export function ProductForm({ sheetUrl }: ProductFormProps) {
                   <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                   <FormControl>
                     <Input placeholder="e.g., Wireless Headphones" {...field} className="pl-10" />
-                  </FormControl>
-                </div>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="currentPrice"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Current Price (USD)</FormLabel>
-                <div className="relative">
-                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <FormControl>
-                    <Input type="number" placeholder="e.g., 99.99" {...field} className="pl-10" />
                   </FormControl>
                 </div>
                 <FormMessage />
