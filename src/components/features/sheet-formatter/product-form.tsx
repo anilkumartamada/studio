@@ -18,7 +18,6 @@ import { productSchema, type ProductFormValues } from "@/lib/schemas/product-sch
 import { useToast } from "@/hooks/use-toast";
 import {
   DollarSign,
-  Fingerprint,
   Package,
   Target,
   Link as LinkIcon,
@@ -32,7 +31,6 @@ export function ProductForm() {
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: {
-      productId: "",
       productName: "",
       targetPrice: '',
       productLink: "",
@@ -73,22 +71,6 @@ export function ProductForm() {
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <FormField
-            control={form.control}
-            name="productId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Product ID</FormLabel>
-                <div className="relative">
-                  <Fingerprint className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <FormControl>
-                    <Input placeholder="e.g., SKU12345" {...field} className="pl-10" />
-                  </FormControl>
-                </div>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
           <FormField
             control={form.control}
             name="productName"
