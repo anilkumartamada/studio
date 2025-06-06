@@ -37,7 +37,7 @@ export function SheetFormatterPage() {
               layout="fill"
               objectFit="cover"
               className="rounded-xl shadow-xl"
-              data-ai-hint="amazon logo online shopping"
+              data-ai-hint="amazon logo"
             />
           </div>
         </div>
