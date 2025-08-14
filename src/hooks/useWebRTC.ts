@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, RefObject } from 'react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -30,7 +30,7 @@ const servers = {
   iceCandidatePoolSize: 10,
 };
 
-export function useWebRTC() {
+export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVideoRef: RefObject<HTMLVideoElement>) {
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -41,8 +41,7 @@ export function useWebRTC() {
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const callCleanupRef = useRef<(() => void) | null>(null);
@@ -71,12 +70,15 @@ export function useWebRTC() {
   }, []);
 
   const getCameraPermission = useCallback(async () => {
-    if (localStream) {
-      localStream.getTracks().forEach((t) => t.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
       setHasCameraPermission(true);
       return stream;
     } catch (error) {
@@ -89,25 +91,25 @@ export function useWebRTC() {
       });
       return null;
     }
-  }, [localStream, toast]);
+  }, [localVideoRef, toast]);
 
   const toggleMic = useCallback(() => {
-    if (localStream) {
-      localStream.getAudioTracks().forEach((track) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = !track.enabled;
       });
       setIsMicMuted((prev) => !prev);
     }
-  }, [localStream]);
+  }, []);
 
   const toggleCamera = useCallback(() => {
-    if (localStream) {
-      localStream.getVideoTracks().forEach((track) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
         track.enabled = !track.enabled;
       });
       setIsCameraOff((prev) => !prev);
     }
-  }, [localStream]);
+  }, []);
 
   // ---- Call State Management ----
   const resetCallState = useCallback(() => {
@@ -116,11 +118,10 @@ export function useWebRTC() {
       callCleanupRef.current = null;
     }
     
-    localStream?.getTracks().forEach((t) => t.stop());
-    setLocalStream(null);
-    
-    remoteStream?.getTracks().forEach((t) => t.stop());
-    setRemoteStream(null);
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close();
@@ -136,7 +137,7 @@ export function useWebRTC() {
     setIsFinding(false);
     setIsMicMuted(false);
     setIsCameraOff(false);
-  }, [localStream, remoteStream]);
+  }, [localVideoRef, remoteVideoRef]);
   
   const hangUp = useCallback(async (reported = false) => {
     if (!callId) {
@@ -203,7 +204,9 @@ export function useWebRTC() {
 
     pc.ontrack = (event) => {
       const stream = event.streams[0];
-      setRemoteStream(stream);
+       if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+      }
       startAudioRecording(stream);
     };
 
@@ -214,7 +217,7 @@ export function useWebRTC() {
     };
     
     return pc;
-  }, [user?.uid]);
+  }, [user?.uid, remoteVideoRef]);
   
   const startCall = useCallback(async () => {
     if (!user) return;
@@ -366,8 +369,6 @@ export function useWebRTC() {
   return {
     callId,
     callData,
-    localStream,
-    remoteStream,
     isFinding,
     hasCameraPermission,
     isMicMuted,

@@ -31,11 +31,13 @@ import { useWebRTC } from '@/hooks/useWebRTC';
 export function VideoCall() {
   const { user } = useAuth();
   const { toast } = useToast();
+  
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
   const {
     callId,
     callData,
-    localStream,
-    remoteStream,
     isFinding,
     hasCameraPermission,
     isMicMuted,
@@ -47,28 +49,12 @@ export function VideoCall() {
     toggleCamera,
     getCameraPermission,
     audioBufferRef,
-  } = useWebRTC();
+  } = useWebRTC(localVideoRef, remoteVideoRef);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isReporting, setIsReporting] = useState(false);
   
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-
-  // Attach streams to video elements
-  useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream]);
-
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
-
 
   // ---- Chat Listener ----
   useEffect(() => {
