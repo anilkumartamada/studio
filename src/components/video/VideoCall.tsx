@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
-import { db, auth } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
@@ -28,31 +28,36 @@ export function VideoCall() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
-  useEffect(() => {
-    const getCameraPermission = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-        localStreamRef.current = stream;
-        setHasCameraPermission(true);
-      } catch (error) {
-        console.error('Error accessing camera:', error);
-        setHasCameraPermission(false);
-        toast({
-          variant: 'destructive',
-          title: 'Camera Access Denied',
-          description: 'Please enable camera permissions in your browser settings to use this app.',
-        });
+  const getCameraPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
       }
-    };
-    getCameraPermission();
-  }, [toast]);
+      localStreamRef.current = stream;
+      setHasCameraPermission(true);
+      return stream;
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setHasCameraPermission(false);
+      toast({
+        variant: 'destructive',
+        title: 'Camera Access Denied',
+        description: 'Please enable camera permissions in your browser settings to use this app.',
+      });
+      return null;
+    }
+  };
 
 
   const startCall = async () => {
-    if (!user || !localStreamRef.current) return;
+    if (!user) return;
+
+    const stream = await getCameraPermission();
+    if (!stream) {
+      return;
+    }
+
     setIsFinding(true);
 
     const callsRef = collection(db, 'calls');
@@ -64,7 +69,7 @@ export function VideoCall() {
           return;
       }
       
-      const pendingCalls = snapshot.docs.filter(doc => !doc.data().participants.includes(user.uid));
+      const pendingCalls = snapshot.docs.filter(doc => doc.data().participants && !doc.data().participants.includes(user.uid));
       
       if (pendingCalls.length > 0) {
         // Join an existing call
@@ -150,18 +155,30 @@ export function VideoCall() {
 
   const hangUp = async () => {
     if (callId) {
-      await updateDoc(doc(db, 'calls', callId), { status: 'ended', endedAt: serverTimestamp() });
-      const callDoc = await getDoc(doc(db, 'calls', callId));
-      if (callDoc.exists() && callDoc.data().participants.length < 2) {
-          await deleteDoc(doc(db, 'calls', callId));
+      const callRef = doc(db, 'calls', callId);
+      const callDoc = await getDoc(callRef);
+      if (callDoc.exists() && callDoc.data().status === 'active') {
+          await updateDoc(callRef, { status: 'ended', endedAt: serverTimestamp() });
+      } else if (callDoc.exists() && callDoc.data().status === 'pending') {
+          await deleteDoc(callRef);
       }
     }
     resetCallState();
   };
 
   const resetCallState = () => {
+    // Stop camera/mic tracks
+    localStreamRef.current?.getTracks().forEach(track => track.stop());
+    localStreamRef.current = null;
+    if(localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+    }
+
+    // Close peer connection
     pcRef.current?.close();
     pcRef.current = null;
+    
+    // Reset state
     setCallId(null);
     setCallData(null);
     setMessages([]);
@@ -190,6 +207,11 @@ export function VideoCall() {
 
     const unsub = onSnapshot(doc(db, 'calls', callId), (doc) => {
       const data = doc.data() as Call;
+      // If doc is deleted (pending call cancelled)
+      if (!data) {
+        resetCallState();
+        return;
+      }
       setCallData(data);
       if (data?.status === 'active' && isFinding) {
           setIsFinding(false);
@@ -198,7 +220,7 @@ export function VideoCall() {
         toast({ title: "Call Ended", description: "The other user has left the call." });
         resetCallState();
       }
-      if (!pcRef.current?.remoteDescription && data?.answer) {
+      if (pcRef.current && !pcRef.current.remoteDescription && data?.answer) {
         pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
       }
     });
@@ -214,6 +236,20 @@ export function VideoCall() {
       messagesUnsub();
     };
   }, [callId, isFinding, toast]);
+  
+  const cancelFinding = async () => {
+      setIsFinding(false);
+      if (callId) {
+          // If a pending call document was created, delete it
+          const callRef = doc(db, 'calls', callId);
+          const callDoc = await getDoc(callRef);
+          if (callDoc.exists() && callDoc.data().status === 'pending') {
+              await deleteDoc(callRef);
+          }
+      }
+      resetCallState();
+  };
+
 
   if (!hasCameraPermission) {
     return (
@@ -229,6 +265,7 @@ export function VideoCall() {
                         You have denied camera and microphone access. Please enable permissions in your browser settings to use Connectile.
                     </AlertDescription>
                 </Alert>
+                 <Button onClick={getCameraPermission} className="mt-4">Try Again</Button>
             </CardContent>
         </Card>
     )
@@ -269,7 +306,7 @@ export function VideoCall() {
                 <Loader2 className="mx-auto h-16 w-16 animate-spin text-primary" />
             </CardContent>
             <CardFooter>
-                <Button variant="outline" className="w-full" onClick={() => setIsFinding(false)}>Cancel</Button>
+                <Button variant="outline" className="w-full" onClick={cancelFinding}>Cancel</Button>
             </CardFooter>
         </Card>
     )
