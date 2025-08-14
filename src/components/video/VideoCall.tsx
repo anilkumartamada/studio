@@ -5,20 +5,10 @@ import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import {
   collection,
-  query,
-  where,
-  onSnapshot,
   addDoc,
-  doc,
-  updateDoc,
-  getDoc,
-  getDocs,
   serverTimestamp,
-  deleteDoc,
-  limit,
-  setDoc,
-  arrayUnion,
-  runTransaction,
+  query,
+  onSnapshot,
 } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,265 +23,74 @@ import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag, Mic, MicOff, VideoOf
 import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
-import type { Call, Message } from '@/types';
+import type { Message } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
 import { transcribeCall } from '@/ai/flows/transcribe-call';
+import { useWebRTC } from '@/hooks/useWebRTC';
 
 export function VideoCall() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const {
+    callId,
+    callData,
+    localStream,
+    remoteStream,
+    isFinding,
+    hasCameraPermission,
+    isMicMuted,
+    isCameraOff,
+    startCall,
+    cancelFinding,
+    hangUp,
+    toggleMic,
+    toggleCamera,
+    getCameraPermission,
+    audioBufferRef,
+  } = useWebRTC();
 
-  const [callId, setCallId] = useState<string | null>(null);
-  const [callData, setCallData] = useState<Call | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [isFinding, setIsFinding] = useState(false);
-  const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [isReporting, setIsReporting] = useState(false);
-  const [isMicMuted, setIsMicMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(false);
-
-
+  
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
 
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
-
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioBufferRef = useRef<Float32Array[]>([]);
-  const callCleanupRef = useRef<(() => void) | null>(null);
-
-  // ---- Permission pre-check on mount (non-blocking) ----
+  // Attach streams to video elements
   useEffect(() => {
-    const checkCameraPermission = async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const hasVideo = devices.some((d) => d.kind === 'videoinput');
-        if (!hasVideo) {
-          setHasCameraPermission(false);
-          return;
-        }
-        const stream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
-        stream.getTracks().forEach((t) => t.stop());
-        setHasCameraPermission(true);
-      } catch (err) {
-        setHasCameraPermission(false);
-        console.error('Initial permission check failed:', err);
-      }
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
+
+
+  // ---- Chat Listener ----
+  useEffect(() => {
+    if (!callId) {
+      setMessages([]);
+      return;
     };
-    checkCameraPermission();
-  }, []);
 
-  // ---- Get user media and attach to local video ----
-  const getCameraPermission = async () => {
-    // Stop any previous local stream (if re-trying)
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    const messagesRef = collection(db, 'calls', callId, 'messages');
+    const q = query(messagesRef);
 
-      // Attach to local preview
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-
-      localStreamRef.current = stream;
-      setHasCameraPermission(true);
-      return stream;
-    } catch (error) {
-      console.error('Error accessing camera/mic:', error);
-      setHasCameraPermission(false);
-      toast({
-        variant: 'destructive',
-        title: 'Camera/Mic Access Denied',
-        description: 'Please enable camera and microphone permissions in your browser settings.',
-      });
-      return null;
-    }
-  };
-
-  // ---- Create PeerConnection and wire handlers (but do NOT create offers/answers here) ----
-  const createPeerConnection = (currentCallId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        // STUN is fine for testing; for production behind NATs you’ll want a TURN server.
-        { urls: 'stun:stun.l.google.com:19302' },
-      ],
+    const unsubMessages = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Message);
+      msgs.sort((a, b) => (a.timestamp as any) - (b.timestamp as any));
+      setMessages(msgs);
     });
 
-    // Prepare remote media sink early
-    if (!remoteStreamRef.current) {
-      remoteStreamRef.current = new MediaStream();
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStreamRef.current;
-    }
+    return () => unsubMessages();
+  }, [callId]);
 
-    pc.onicecandidate = async (event) => {
-      if (!event.candidate) return;
-      const callRef = doc(db, 'calls', currentCallId);
-      try {
-        const callDoc = await getDoc(callRef);
-        if (!callDoc.exists()) return;
-        const cData = callDoc.data() as Call;
-        const isOfferer = cData.participants[0] === user?.uid;
-        const field = isOfferer ? 'offerCandidates' : 'answerCandidates';
-        await updateDoc(callRef, { [field]: arrayUnion(event.candidate.toJSON()) });
-      } catch (err) {
-        console.log('Failed to add ICE candidate (maybe call ended):', err);
-      }
-    };
-
-    pc.ontrack = (event) => {
-      // Ensure tracks are added to our dedicated remote stream (not directly to video)
-      const [remoteStream] = event.streams;
-      if (!remoteStreamRef.current) {
-        remoteStreamRef.current = new MediaStream();
-      }
-      // Add all tracks from the event’s stream to our remote stream
-      remoteStream.getTracks().forEach((track) => {
-        if (!remoteStreamRef.current!.getTracks().includes(track)) {
-          remoteStreamRef.current!.addTrack(track);
-        }
-      });
-      // Attach (if not already)
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
-        remoteVideoRef.current.srcObject = remoteStreamRef.current;
-      }
-      startAudioRecording();
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-        // Soft cleanup if the connection dies
-        console.log('Peer connection state:', pc.connectionState);
-      }
-    };
-
-    return pc;
-  };
-
-  // ---- Start matching and connect logic ----
-  const startCall = async () => {
-    if (!user) return;
-
-    // 1) Get local media FIRST
-    const stream = await getCameraPermission();
-    if (!stream) return;
-
-    setIsFinding(true);
-
-    // 2) Try to join a pending call from someone else
-    const callsRef = collection(db, 'calls');
-    const q = query(callsRef, where('status', '==', 'pending'), limit(1));
-    const querySnapshot = await getDocs(q);
-    const pendingCalls = querySnapshot.docs.filter((d) => !(d.data().participants || []).includes(user.uid));
-
-    if (pendingCalls.length > 0) {
-      const callDocToJoin = pendingCalls[0];
-      const callDocRef = doc(db, 'calls', callDocToJoin.id);
-
-      try {
-        await runTransaction(db, async (transaction) => {
-          const snap = await transaction.get(callDocRef);
-          if (!snap.exists() || snap.data().status !== 'pending') {
-            throw new Error('Call not available');
-          }
-
-          // 3) Create PC
-          pcRef.current = createPeerConnection(callDocToJoin.id);
-
-          // 4) ADD LOCAL TRACKS *BEFORE* createAnswer
-          stream.getTracks().forEach((track) => {
-            pcRef.current!.addTrack(track, stream);
-          });
-
-          // 5) Set remote offer, create and set local answer
-          const offer = snap.data().offer;
-          await pcRef.current!.setRemoteDescription(new RTCSessionDescription(offer));
-
-          const answer = await pcRef.current!.createAnswer();
-          await pcRef.current!.setLocalDescription(answer);
-
-          // 6) Move call to active with our answer
-          transaction.update(callDocRef, {
-            status: 'active',
-            participants: arrayUnion(user.uid),
-            answer: { sdp: answer.sdp || '', type: answer.type },
-          });
-        });
-
-        setCallId(callDocToJoin.id);
-      } catch (error) {
-        console.error('Failed to join call, restarting search:', error);
-        resetCallState();
-        setTimeout(() => startCall(), 1000);
-        return;
-      }
-    } else {
-      // No pending call found — create one and wait
-      const newCallDocRef = doc(collection(db, 'calls'));
-
-      // 3) Create PC
-      pcRef.current = createPeerConnection(newCallDocRef.id);
-
-      // 4) ADD LOCAL TRACKS *BEFORE* createOffer
-      stream.getTracks().forEach((track) => {
-        pcRef.current!.addTrack(track, stream);
-      });
-
-      // 5) Create and set local offer
-      const offer = await pcRef.current!.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true,
-      });
-      await pcRef.current!.setLocalDescription(offer);
-
-      // 6) Write pending call doc
-      await setDoc(newCallDocRef, {
-        participants: [user.uid],
-        status: 'pending',
-        startedAt: serverTimestamp(),
-        offer: { sdp: offer.sdp || '', type: offer.type },
-        offerCandidates: [],
-        answerCandidates: [],
-      });
-
-      setCallId(newCallDocRef.id);
-    }
-  };
-
-  // ---- Audio capture for report transcription (from REMOTE stream) ----
-  const startAudioRecording = () => {
-    if (!remoteStreamRef.current || audioContextRef.current || !remoteStreamRef.current.getAudioTracks().length) {
-      return;
-    }
-    const audioContext = new AudioContext();
-    audioContextRef.current = audioContext;
-
-    const source = audioContext.createMediaStreamSource(remoteStreamRef.current);
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-    source.connect(processor);
-    processor.connect(audioContext.destination);
-
-    processor.onaudioprocess = (e) => {
-      const inputData = e.inputBuffer.getChannelData(0);
-      const buffer = new Float32Array(inputData);
-      audioBufferRef.current.push(buffer);
-    };
-  };
 
   const stopAudioRecordingAndTranscribe = async (): Promise<string> => {
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
     if (audioBufferRef.current.length === 0) {
       return 'No audio was recorded.';
     }
@@ -311,7 +110,6 @@ export function VideoCall() {
       pcmBuffer[i] = clamped * 32767;
     }
 
-    // NOTE: Buffer may need a polyfill in some bundlers. Keep as-is if it already works in your setup.
     const audioDataUri = 'data:audio/pcm;base64,' + Buffer.from(pcmBuffer.buffer).toString('base64');
     audioBufferRef.current = [];
 
@@ -327,31 +125,6 @@ export function VideoCall() {
       });
       return 'Transcription failed.';
     }
-  };
-
-  // ---- Hang up / report ----
-  const hangUp = async (reported = false) => {
-    if (!callId) {
-      setIsFinding(false);
-      resetCallState();
-      return;
-    }
-
-    if (!reported) {
-      const callRef = doc(db, 'calls', callId);
-      const callDoc = await getDoc(callRef);
-      if (callDoc.exists()) {
-        if (callDoc.data().status === 'active') {
-          await updateDoc(callRef, { status: 'ended', endedAt: serverTimestamp() }).catch((e) =>
-            console.error('Could not update call to ended', e),
-          );
-        } else if (callDoc.data().status === 'pending') {
-          await deleteDoc(callRef).catch((e) => console.error('Could not delete pending call', e));
-        }
-      }
-    }
-
-    resetCallState();
   };
 
   const reportCall = async () => {
@@ -395,69 +168,6 @@ export function VideoCall() {
     }
   };
 
-  // Ensure video elements are attached to streams after render
-  useEffect(() => {
-    if (localVideoRef.current && localStreamRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
-    }
-    if (remoteVideoRef.current && remoteStreamRef.current) {
-      remoteVideoRef.current.srcObject = remoteStreamRef.current;
-    }
-  }, [callId, localStreamRef.current, remoteStreamRef.current]);
-
-  // Improved toggleMic and toggleCamera
-  const toggleMic = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = !isMicMuted;
-      });
-      setIsMicMuted((prev) => !prev);
-    }
-  };
-
-  const toggleCamera = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = !isCameraOff;
-      });
-      setIsCameraOff((prev) => !prev);
-    }
-  };
-
-  // ---- Reset all state and media/PC resources ----
-  const resetCallState = () => {
-    if (callCleanupRef.current) {
-      callCleanupRef.current();
-      callCleanupRef.current = null;
-    }
-
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-
-    remoteStreamRef.current?.getTracks().forEach((t) => t.stop());
-    remoteStreamRef.current = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close();
-    }
-    audioContextRef.current = null;
-    audioBufferRef.current = [];
-
-    pcRef.current?.close();
-    pcRef.current = null;
-
-    setCallId(null);
-    setCallData(null);
-    setMessages([]);
-    setIsFinding(false);
-    setNewMessage('');
-    setIsMicMuted(false);
-    setIsCameraOff(false);
-  };
-
-  // ---- Chat ----
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!callId || !newMessage.trim() || !user) return;
@@ -471,105 +181,8 @@ export function VideoCall() {
     setNewMessage('');
   };
 
-  // (Optional safety net) If something changes later, ensure tracks are present
-  useEffect(() => {
-    if (pcRef.current && localStreamRef.current && pcRef.current.connectionState !== 'closed') {
-      localStreamRef.current.getTracks().forEach((track) => {
-        if (!pcRef.current!.getSenders().find((s) => s.track === track)) {
-          pcRef.current!.addTrack(track, localStreamRef.current!);
-        }
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callData]);
 
-  // ---- Firestore listeners for the active/pending call ----
-  useEffect(() => {
-    if (!callId || !user) return;
-
-    const addedCandidates = new Set<string>();
-
-    const unsubCall = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
-      if (!docSnapshot.exists()) {
-        if (isFinding) {
-          // If we were finding a call and it disappears, just restart the search
-          resetCallState();
-          setTimeout(() => startCall(), 500); 
-        } else if (callId) {
-          // If we were in an active call, notify the user
-          resetCallState();
-          toast({ title: 'Call Canceled', description: 'The other user canceled the call.' });
-        }
-        return;
-      }
-
-      const newData = docSnapshot.data() as Call;
-      setCallData(newData);
-
-      if (newData?.status === 'active' && isFinding) {
-        setIsFinding(false);
-      }
-
-      if (newData?.status === 'ended' && !isReporting) {
-        toast({ title: 'Call Ended', description: 'The other user has left the call.' });
-        resetCallState();
-        return;
-      }
-
-      // If we are the offerer and we now have an answer, set it
-      if (pcRef.current && !pcRef.current.remoteDescription && newData?.answer) {
-        // FIX: Check signaling state before setting remote description
-        if (pcRef.current.signalingState === 'have-local-offer') {
-          await pcRef.current.setRemoteDescription(new RTCSessionDescription(newData.answer));
-        }
-      }
-
-      // Add remote ICE candidates
-      const isOfferer = newData.participants[0] === user.uid;
-      const candidatesField = isOfferer ? 'answerCandidates' : 'offerCandidates';
-      const candidates = (newData as any)[candidatesField] as any[] | undefined;
-
-      if (candidates && pcRef.current?.remoteDescription) {
-        candidates.forEach((c) => {
-          const key = JSON.stringify(c);
-          if (!addedCandidates.has(key)) {
-            pcRef.current!.addIceCandidate(new RTCIceCandidate(c));
-            addedCandidates.add(key);
-          }
-        });
-      }
-    });
-
-    const unsubMessages = onSnapshot(query(collection(db, 'calls', callId, 'messages')), (snapshot) => {
-      const msgs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Message);
-      msgs.sort((a, b) => (a.timestamp as any) - (b.timestamp as any));
-      setMessages(msgs);
-    });
-
-    callCleanupRef.current = () => {
-      unsubCall();
-      unsubMessages();
-    };
-
-    return () => {
-      unsubCall();
-      unsubMessages();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callId, user, isFinding]);
-
-  // ---- UI states ----
-  const cancelFinding = async () => {
-    setIsFinding(false);
-    if (callId) {
-      const callRef = doc(db, 'calls', callId);
-      const callDoc = await getDoc(callRef);
-      if (callDoc.exists() && callDoc.data().status === 'pending') {
-        await deleteDoc(callRef).catch((e) => console.error('Could not delete pending call on cancel', e));
-      }
-    }
-    resetCallState();
-  };
+  // ---- UI States ----
 
   if (!hasCameraPermission) {
     return (
@@ -707,4 +320,3 @@ export function VideoCall() {
     </div>
   );
 }
-
