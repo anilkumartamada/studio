@@ -9,11 +9,12 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 
 const formSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }),
@@ -37,8 +38,17 @@ export function SignupForm() {
     setIsLoading(true);
     try {
       // Create user with email and password.
-      // The user document in Firestore will be created by a server-side function.
-      await createUserWithEmailAndPassword(auth, values.email, values.password);
+      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
+      const user = userCredential.user;
+
+      // Create a user document in Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email: user.email,
+        role: "user",
+        status: "active",
+        createdAt: serverTimestamp(),
+      });
       
       toast({
         title: "Success",
