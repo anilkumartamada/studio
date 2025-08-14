@@ -482,9 +482,11 @@ export function VideoCall() {
     const unsubCall = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
       if (!docSnapshot.exists()) {
         if (isFinding) {
+          // If we were finding a call and it disappears, just restart the search
           resetCallState();
-          setTimeout(() => startCall(), 500);
+          setTimeout(() => startCall(), 500); 
         } else if (callId) {
+          // If we were in an active call, notify the user
           resetCallState();
           toast({ title: 'Call Canceled', description: 'The other user canceled the call.' });
         }
@@ -506,7 +508,10 @@ export function VideoCall() {
 
       // If we are the offerer and we now have an answer, set it
       if (pcRef.current && !pcRef.current.remoteDescription && newData?.answer) {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(newData.answer));
+        // FIX: Check signaling state before setting remote description
+        if (pcRef.current.signalingState === 'have-local-offer') {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(newData.answer));
+        }
       }
 
       // Add remote ICE candidates
