@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -124,11 +123,11 @@ export function VideoCall() {
           const answer = await pcRef.current.createAnswer();
           await pcRef.current.setLocalDescription(answer);
 
-          transaction.update(callDocRef, {
+          transaction.set(callDocRef, {
             status: 'active',
             participants: arrayUnion(user.uid),
             answer: { sdp: answer.sdp, type: answer.type },
-          });
+          }, { merge: true });
         });
       } catch (error) {
         console.error("Failed to join call, restarting search:", error);
