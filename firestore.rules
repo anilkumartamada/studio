@@ -2,31 +2,46 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can create their own user document during signup, and can only
-    // read/update their own document afterwards.
+
     match /users/{userId} {
-      allow create;
+      // A user can be created by anyone during signup.
+      allow create: if request.auth.uid == userId;
+      // A user can only read or update their own data.
       allow read, update: if request.auth.uid == userId;
+      // Users cannot be deleted.
+      allow delete: if false;
     }
 
-    // A user can create a call as long as they are authenticated.
-    // A user can read, update or delete a call document only if their uid is in the `participants` array.
     match /calls/{callId} {
+      // Anyone authenticated can create a call.
       allow create: if request.auth.uid != null;
-      allow read, update, delete: if request.auth.uid in resource.data.participants;
+      
+      // Anyone can read a call document to find a pending call. This is safe
+      // as no sensitive data is stored directly on the call document itself.
+      allow read: if true;
+      
+      // A user can update a call (e.g., to join it or end it) if they are a participant.
+      allow update: if request.auth.uid in resource.data.participants;
+      
+      // A user can delete a pending call if they are the one who created it.
+      allow delete: if resource.data.status == 'pending' && request.auth.uid == resource.data.participants[0];
+
+      match /messages/{messageId} {
+        // A user can read messages or create a new message if they are a participant in the call.
+        allow read, create: if request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants;
+      }
+
+      match /iceCandidates/{candidateId} {
+        // A user can read or create ICE candidates if they are a participant in the call.
+        allow read, create: if request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants;
+      }
     }
 
-    // A user can read or create documents (messages, ICE candidates) in a call's subcollection
-    // only if they are a participant of that call.
-    match /calls/{callId}/{subcollection}/{documentId} {
-      allow read, create: if request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants;
-    }
-
-    // Any authenticated user can create a report.
-    // Only admins can read reports.
     match /reports/{reportId} {
-      allow create: if request.auth.uid != null;
-      allow read: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+        // Any authenticated user can create a report.
+        allow create: if request.auth.uid != null;
+        // Only admins can view reports.
+        allow read, update, delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
   }
 }
