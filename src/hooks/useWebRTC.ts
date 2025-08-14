@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
@@ -331,8 +330,9 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
       }
 
       // Answerer logic is handled in startCall via transaction. Offerer needs this.
-      if (pcRef.current && !pcRef.current.remoteDescription && newData?.answer) {
-        if (pcRef.current.signalingState === 'have-local-offer') {
+      if (pcRef.current && newData?.answer) {
+        // Only set remote description if we are the offerer and haven't set it yet
+        if (pcRef.current.signalingState === 'have-local-offer' && !pcRef.current.remoteDescription) {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(newData.answer));
         }
       }
@@ -377,4 +377,3 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
   };
 }
 
-    
