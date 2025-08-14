@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -110,14 +111,24 @@ export function VideoCall() {
 
     if (pendingCalls.length > 0) {
       // Join an existing call
-      const callDoc = pendingCalls[0];
-      const callDocRef = doc(db, 'calls', callDoc.id);
-      setCallId(callDoc.id);
+      const callDocToJoin = pendingCalls[0];
+      const callDocRef = doc(db, 'calls', callDocToJoin.id);
 
-      pcRef.current = await createPeerConnection(callDoc.id);
+      // Check if the document still exists before trying to update it
+      const callDocSnapshot = await getDoc(callDocRef);
+      if (!callDocSnapshot.exists()) {
+        // The call was cancelled by the other user, restart the search
+        console.log("Call was cancelled, restarting search.");
+        startCall();
+        return;
+      }
+
+      setCallId(callDocToJoin.id);
+
+      pcRef.current = await createPeerConnection(callDocToJoin.id);
       localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
 
-      const offer = callDoc.data().offer;
+      const offer = callDocToJoin.data().offer;
       await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
       
       const answer = await pcRef.current.createAnswer();
@@ -160,6 +171,7 @@ export function VideoCall() {
       if (event.candidate) {
         const callRef = doc(db, 'calls', currentCallId);
         const callDoc = await getDoc(callRef);
+        if (!callDoc.exists()) return; // Don't try to update a deleted document
         const callData = callDoc.data() as Call;
         // Determine if this client is the offerer or answerer
         const isOfferer = callData.participants[0] === user?.uid;
@@ -549,3 +561,5 @@ export function VideoCall() {
     </div>
   );
 }
+
+    
