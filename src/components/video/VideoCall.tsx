@@ -113,7 +113,6 @@ export function VideoCall() {
           }
           
           pcRef.current = await createPeerConnection(callDocToJoin.id);
-          localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
 
           const offer = callDocSnapshot.data().offer;
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
@@ -140,7 +139,6 @@ export function VideoCall() {
       const newCallDocRef = doc(collection(db, 'calls'));
 
       pcRef.current = await createPeerConnection(newCallDocRef.id);
-      localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
       
       const offer = await pcRef.current.createOffer();
       await pcRef.current.setLocalDescription(offer);
@@ -372,6 +370,19 @@ export function VideoCall() {
     });
     setNewMessage('');
   };
+    
+   // Add local media stream tracks to the peer connection
+  useEffect(() => {
+    if (pcRef.current && localStreamRef.current && pcRef.current.connectionState !== 'closed') {
+      localStreamRef.current.getTracks().forEach(track => {
+        // Avoid adding duplicate tracks
+        if (!pcRef.current!.getSenders().find(sender => sender.track === track)) {
+          pcRef.current!.addTrack(track, localStreamRef.current!);
+        }
+      });
+    }
+  }, [callData, pcRef, localStreamRef]); // Rerun when callData changes, indicating a new state
+
 
   // Main listener for call document changes
   useEffect(() => {
@@ -394,7 +405,6 @@ export function VideoCall() {
       }
       
       const newData = docSnapshot.data() as Call;
-      const oldData = callData;
       setCallData(newData);
       
       // If status becomes active, stop the "finding" spinner
@@ -446,7 +456,7 @@ export function VideoCall() {
       unsubCall();
       unsubMessages();
     };
-  }, [callId, user]); // Rerun this whole effect if callId or user changes
+  }, [callId, user, isFinding]); // Rerun this whole effect if callId or user changes
   
   const cancelFinding = async () => {
     setIsFinding(false);
