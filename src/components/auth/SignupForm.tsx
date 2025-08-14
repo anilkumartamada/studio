@@ -9,8 +9,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
@@ -37,22 +36,15 @@ export function SignupForm() {
   async function onSubmit(values: z.infer<typeof formSchema>) {
     setIsLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const user = userCredential.user;
-
-      await setDoc(doc(db, "users", user.uid), {
-        uid: user.uid,
-        email: user.email,
-        role: 'user',
-        status: 'active',
-        createdAt: serverTimestamp(),
-      });
+      // Create user with email and password.
+      // The user document in Firestore will be created by a server-side function.
+      await createUserWithEmailAndPassword(auth, values.email, values.password);
       
       toast({
         title: "Success",
-        description: "Account created successfully.",
+        description: "Account created successfully. Please log in.",
       });
-      router.push("/");
+      router.push("/login"); // Redirect to login page after successful signup
     } catch (error: any) {
       toast({
         variant: "destructive",
