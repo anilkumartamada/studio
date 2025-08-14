@@ -123,11 +123,11 @@ export function VideoCall() {
           const answer = await pcRef.current.createAnswer();
           await pcRef.current.setLocalDescription(answer);
 
-          transaction.set(callDocRef, {
+          transaction.update(callDocRef, {
             status: 'active',
             participants: arrayUnion(user.uid),
             answer: { sdp: answer.sdp, type: answer.type },
-          }, { merge: true });
+          });
         });
       } catch (error) {
         console.error("Failed to join call, restarting search:", error);
@@ -167,18 +167,23 @@ export function VideoCall() {
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
         const callRef = doc(db, 'calls', currentCallId);
-        const callDoc = await getDoc(callRef);
-        if (!callDoc.exists()) {
-            console.log('Call document does not exist, skipping ICE candidate update.');
-            return; 
+        try {
+          // We don't need to get the doc first, just try to update it.
+          // The security rules will determine if the user is a participant.
+          // This can still fail if the other user hangs up at the same time.
+          const callDoc = await getDoc(callRef);
+          if (callDoc.exists()) {
+              const callData = callDoc.data() as Call;
+              const isOfferer = callData.participants[0] === user?.uid;
+              const fieldToUpdate = isOfferer ? 'offerCandidates' : 'answerCandidates';
+              
+              await updateDoc(callRef, {
+                  [fieldToUpdate]: arrayUnion(event.candidate.toJSON())
+              });
+          }
+        } catch (error) {
+            console.log("Failed to add ICE candidate, call may have ended:", error);
         }
-        const callData = callDoc.data() as Call;
-        const isOfferer = callData.participants[0] === user?.uid;
-        const fieldToUpdate = isOfferer ? 'offerCandidates' : 'answerCandidates';
-
-        await updateDoc(callRef, {
-          [fieldToUpdate]: arrayUnion(event.candidate.toJSON())
-        }).catch(err => console.error("Failed to update ICE candidate, call might have ended.", err));
       }
     };
 
