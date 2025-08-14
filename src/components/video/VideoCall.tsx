@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit, setDoc, arrayUnion } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit, setDoc, arrayUnion, runTransaction } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag } from 'lucide-react';
@@ -97,51 +97,49 @@ export function VideoCall() {
     setIsFinding(true);
 
     const callsRef = collection(db, 'calls');
-    // Query for any pending call
-    const q = query(
-      callsRef, 
-      where('status', '==', 'pending'),
-      limit(1)
-    );
-
+    const q = query(callsRef, where('status', '==', 'pending'), limit(1));
     const querySnapshot = await getDocs(q);
-    // Filter out calls created by the current user
     const pendingCalls = querySnapshot.docs.filter(doc => !doc.data().participants.includes(user.uid));
 
-
     if (pendingCalls.length > 0) {
-      // Join an existing call
       const callDocToJoin = pendingCalls[0];
       const callDocRef = doc(db, 'calls', callDocToJoin.id);
 
-      // Check if the document still exists before trying to update it
-      const callDocSnapshot = await getDoc(callDocRef);
-      if (!callDocSnapshot.exists()) {
-        // The call was cancelled by the other user, restart the search
-        console.log("Call was cancelled, restarting search.");
-        startCall();
+      try {
+        await runTransaction(db, async (transaction) => {
+          const callDocSnapshot = await transaction.get(callDocRef);
+
+          if (!callDocSnapshot.exists() || callDocSnapshot.data().status !== 'pending') {
+            throw new Error("Call not available");
+          }
+
+          setCallId(callDocToJoin.id);
+
+          pcRef.current = await createPeerConnection(callDocToJoin.id);
+          localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
+
+          const offer = callDocSnapshot.data().offer;
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+          
+          const answer = await pcRef.current.createAnswer();
+          await pcRef.current.setLocalDescription(answer);
+
+          transaction.update(callDocRef, {
+            status: 'active',
+            participants: arrayUnion(user.uid),
+            answer: { sdp: answer.sdp, type: answer.type },
+          });
+        });
+      } catch (error) {
+        console.error("Failed to join call, restarting search:", error);
+        resetCallState();
+        // Brief timeout to prevent immediate re-querying and potential loops
+        setTimeout(() => startCall(), 1000);
         return;
       }
-
-      setCallId(callDocToJoin.id);
-
-      pcRef.current = await createPeerConnection(callDocToJoin.id);
-      localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
-
-      const offer = callDocToJoin.data().offer;
-      await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      
-      const answer = await pcRef.current.createAnswer();
-      await pcRef.current.setLocalDescription(answer);
-
-      await updateDoc(callDocRef, {
-        status: 'active',
-        participants: arrayUnion(user.uid),
-        answer: { sdp: answer.sdp, type: answer.type },
-      });
     } else {
       // Create a new call
-      const newCallDocRef = doc(collection(db, 'calls')); // Create a reference first to get the ID
+      const newCallDocRef = doc(collection(db, 'calls'));
       setCallId(newCallDocRef.id);
 
       pcRef.current = await createPeerConnection(newCallDocRef.id);
@@ -171,15 +169,17 @@ export function VideoCall() {
       if (event.candidate) {
         const callRef = doc(db, 'calls', currentCallId);
         const callDoc = await getDoc(callRef);
-        if (!callDoc.exists()) return; // Don't try to update a deleted document
+        if (!callDoc.exists()) {
+            console.log('Call document does not exist, skipping ICE candidate update.');
+            return; 
+        }
         const callData = callDoc.data() as Call;
-        // Determine if this client is the offerer or answerer
         const isOfferer = callData.participants[0] === user?.uid;
         const fieldToUpdate = isOfferer ? 'offerCandidates' : 'answerCandidates';
 
         await updateDoc(callRef, {
           [fieldToUpdate]: arrayUnion(event.candidate.toJSON())
-        });
+        }).catch(err => console.error("Failed to update ICE candidate, call might have ended.", err));
       }
     };
 
@@ -267,9 +267,9 @@ export function VideoCall() {
         const callDoc = await getDoc(callRef);
         if (callDoc.exists()) {
             if (callDoc.data().status === 'active') {
-                await updateDoc(callRef, { status: 'ended', endedAt: serverTimestamp() });
+                await updateDoc(callRef, { status: 'ended', endedAt: serverTimestamp() }).catch(e => console.error("Could not update call to ended", e));
             } else if (callDoc.data().status === 'pending') {
-                await deleteDoc(callRef);
+                await deleteDoc(callRef).catch(e => console.error("Could not delete pending call", e));
             }
         }
     }
@@ -445,7 +445,7 @@ export function VideoCall() {
     setIsFinding(false);
     if (callId) {
         // A pending call document was created, so delete it
-        await deleteDoc(doc(db, 'calls', callId));
+        await deleteDoc(doc(db, 'calls', callId)).catch(e => console.error("Could not delete pending call on cancel", e));
     }
     resetCallState();
   };
