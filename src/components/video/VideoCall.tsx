@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -396,21 +395,32 @@ export function VideoCall() {
     }
   };
 
+  // Ensure video elements are attached to streams after render
+  useEffect(() => {
+    if (localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+    if (remoteVideoRef.current && remoteStreamRef.current) {
+      remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    }
+  }, [callId, localStreamRef.current, remoteStreamRef.current]);
+
+  // Improved toggleMic and toggleCamera
   const toggleMic = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = !track.enabled;
-        setIsMicMuted(!track.enabled);
+        track.enabled = !isMicMuted;
       });
+      setIsMicMuted((prev) => !prev);
     }
   };
 
   const toggleCamera = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = !track.enabled;
-        setIsCameraOff(!track.enabled);
+        track.enabled = !isCameraOff;
       });
+      setIsCameraOff((prev) => !prev);
     }
   };
 
@@ -698,4 +708,3 @@ export function VideoCall() {
   );
 }
 
-    
