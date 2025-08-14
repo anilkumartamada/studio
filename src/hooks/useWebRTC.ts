@@ -208,12 +208,12 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-        console.log('Peer connection state change:', pc.connectionState);
+        hangUp();
       }
     };
     
     return pc;
-  }, [user?.uid, remoteVideoRef]);
+  }, [user?.uid, remoteVideoRef, hangUp]);
   
   const startCall = useCallback(async () => {
     if (!user) return;
@@ -310,13 +310,10 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
 
     const unsubCall = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
       if (!docSnapshot.exists()) {
-        if (isFinding) {
-          resetCallState();
-          setTimeout(() => startCall(), 500); 
-        } else if (callId) {
+        if (callId) { // Only show toast if a call was active
           toast({ title: 'Call Ended', description: 'The other user has left the call.' });
-          resetCallState();
         }
+        resetCallState();
         return;
       }
 
@@ -333,6 +330,7 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
         return;
       }
 
+      // Answerer logic is handled in startCall via transaction. Offerer needs this.
       if (pcRef.current && !pcRef.current.remoteDescription && newData?.answer) {
         if (pcRef.current.signalingState === 'have-local-offer') {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(newData.answer));
@@ -359,7 +357,7 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
     };
 
     return unsubCall;
-  }, [callId, user, isFinding, resetCallState, startCall, toast]);
+  }, [callId, user, isFinding, resetCallState, toast]);
 
 
   return {
