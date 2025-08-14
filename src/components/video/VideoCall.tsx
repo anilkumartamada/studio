@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit, setDoc } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag } from 'lucide-react';
@@ -42,6 +42,11 @@ export function VideoCall() {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const hasVideo = devices.some(device => device.kind === 'videoinput');
+            if (!hasVideo) {
+              setHasCameraPermission(false);
+              return;
+            }
+            // Try to get user media to check for permission.
             const stream = await navigator.mediaDevices.getUserMedia({video: hasVideo, audio: true});
             // We got the stream, so we have permission. Stop the tracks immediately.
             stream.getTracks().forEach(track => track.stop());
@@ -57,7 +62,8 @@ export function VideoCall() {
 
   const getCameraPermission = async () => {
     if (localStreamRef.current) {
-        return localStreamRef.current;
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+        localStreamRef.current = null;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -90,14 +96,15 @@ export function VideoCall() {
     setIsFinding(true);
 
     const callsRef = collection(db, 'calls');
+    // Query for any pending call
     const q = query(
       callsRef, 
       where('status', '==', 'pending'),
-      where('participants', '!=', [user.uid]), // Firestore doesn't support != on arrays, this is a workaround for single-participant pending calls
       limit(1)
     );
 
     const querySnapshot = await getDocs(q);
+    // Filter out calls created by the current user
     const pendingCalls = querySnapshot.docs.filter(doc => !doc.data().participants.includes(user.uid));
 
 
@@ -122,7 +129,7 @@ export function VideoCall() {
       });
     } else {
       // Create a new call
-      const newCallDocRef = doc(callsRef); // Create a reference first to get the ID
+      const newCallDocRef = doc(collection(db, 'calls')); // Create a reference first to get the ID
       setCallId(newCallDocRef.id);
 
       pcRef.current = await createPeerConnection(newCallDocRef.id);
@@ -162,15 +169,20 @@ export function VideoCall() {
     };
     
     // Listen for ICE candidates
-    const iceCandidatesRef = collection(db, 'calls', currentCallId, 'iceCandidates');
-    const iceUnsubscribe = onSnapshot(iceCandidatesRef, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
+    const iceCandidatesCollection = collection(db, 'calls', currentCallId, 'iceCandidates');
+    const iceCandidatesQuery = query(iceCandidatesCollection);
+    const iceUnsubscribe = onSnapshot(iceCandidatesQuery, (snapshot) => {
+      snapshot.docChanges().forEach(async (change) => {
         if (change.type === 'added') {
-            const candidate = new RTCIceCandidate(change.doc.data());
-            // Make sure the peer connection is in a state to accept candidates
-            if (pc.remoteDescription) {
-                pc.addIceCandidate(candidate);
+          const candidate = new RTCIceCandidate(change.doc.data());
+          // Make sure the peer connection is in a state to accept candidates
+          if (pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(candidate);
+            } catch(e) {
+              console.error('Error adding received ICE candidate', e);
             }
+          }
         }
       });
     });
@@ -184,7 +196,7 @@ export function VideoCall() {
   };
 
     const startAudioRecording = () => {
-        if (!remoteStreamRef.current || audioContextRef.current) return;
+        if (!remoteStreamRef.current || audioContextRef.current || !remoteStreamRef.current.getAudioTracks().length) return;
         
         const audioContext = new AudioContext();
         audioContextRef.current = audioContext;
@@ -405,7 +417,7 @@ export function VideoCall() {
           hangUp();
       }
     };
-  }, [callId]);
+  }, [callId, isFinding, isReporting]);
   
   const cancelFinding = async () => {
     setIsFinding(false);
