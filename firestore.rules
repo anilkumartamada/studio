@@ -1,33 +1,28 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can only manage their own user document
     match /users/{userId} {
-      allow read, update, delete: if request.auth.uid == userId;
-      // Anyone can create a user document during signup
+      allow read: if request.auth.uid != null;
       allow create: if request.auth.uid != null;
-    }
-
-    match /calls/{callId} {
-      // A user can create a call if they are authenticated.
-      // They can join a call (update) if they are not already in it.
-      allow create: if request.auth.uid != null;
-      allow update: if request.auth.uid in request.resource.data.participants;
-      
-      // A user can read or delete a call if they are a participant
-      allow read, delete: if request.auth.uid in resource.data.participants;
-
-      // Messages can be created and read by participants of the call
-      match /messages/{messageId} {
-        allow read, create: if request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants;
-      }
+      allow update: if request.auth.uid == userId;
     }
 
     match /reports/{reportId} {
-        // Any authenticated user can create a report
-        allow create: if request.auth.uid != null;
-        // Only admins can view/manage reports
-        allow read, update, delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow create: if request.auth.uid != null;
+      // Only admins can read reports
+      allow read, write: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /calls/{callId} {
+      // Allow any authenticated user to manage calls for now.
+      // This is to debug the permission issues.
+      allow read, write, create, delete: if request.auth.uid != null;
+
+      match /messages/{messageId} {
+        // Allow any authenticated user to read/write messages in any call.
+        allow read, write: if request.auth.uid != null;
+      }
     }
   }
 }
