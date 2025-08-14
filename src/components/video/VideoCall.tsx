@@ -386,8 +386,14 @@ export function VideoCall() {
     const unsub = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
       // If doc is deleted (pending call cancelled by creator)
       if (!docSnapshot.exists()) {
-        resetCallState();
-        toast({ title: "Call Canceled", description: "The other user canceled the call." });
+        if (isFinding) {
+          // If we were still finding a match, just restart the search silently.
+          resetCallState();
+          setTimeout(() => startCall(), 500); // Small delay to prevent loops
+        } else {
+          resetCallState();
+          toast({ title: "Call Canceled", description: "The other user canceled the call." });
+        }
         return;
       }
 
@@ -438,18 +444,18 @@ export function VideoCall() {
     return () => {
       unsub();
       messagesUnsub();
-      // If the component unmounts unexpectedly, try to clean up the call state
-      if(pcRef.current || isFinding) {
-          hangUp();
-      }
     };
   }, [callId, isFinding, isReporting, user, callData]);
   
   const cancelFinding = async () => {
     setIsFinding(false);
     if (callId) {
-        // A pending call document was created, so delete it
-        await deleteDoc(doc(db, 'calls', callId)).catch(e => console.error("Could not delete pending call on cancel", e));
+        const callRef = doc(db, 'calls', callId);
+        const callDoc = await getDoc(callRef);
+        // Only delete the doc if it's still pending (i.e., we created it and no one joined)
+        if (callDoc.exists() && callDoc.data().status === 'pending') {
+          await deleteDoc(callRef).catch(e => console.error("Could not delete pending call on cancel", e));
+        }
     }
     resetCallState();
   };
