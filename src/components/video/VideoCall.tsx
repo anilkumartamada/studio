@@ -125,7 +125,7 @@ export function VideoCall() {
 
       await updateDoc(callDocRef, {
         status: 'active',
-        participants: [...callDoc.data().participants, user.uid],
+        participants: arrayUnion(user.uid),
         answer: { sdp: answer.sdp, type: answer.type },
       });
     } else {
