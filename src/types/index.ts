@@ -16,6 +16,8 @@ export interface Call {
   endedAt?: Timestamp;
   offer?: { sdp: string; type: string };
   answer?: { sdp: string; type: string };
+  offerCandidates?: any[];
+  answerCandidates?: any[];
 }
 
 export interface Message {

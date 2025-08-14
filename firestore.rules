@@ -1,47 +1,31 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
+    
     match /users/{userId} {
-      // A user can be created by anyone during signup.
-      allow create: if request.auth.uid == userId;
-      // A user can only read or update their own data.
-      allow read, update: if request.auth.uid == userId;
-      // Users cannot be deleted.
-      allow delete: if false;
+      allow create; // Anyone can create a user document during signup
+      allow read, update, delete: if request.auth.uid == userId; // Only the user can manage their own document
     }
 
     match /calls/{callId} {
-      // Anyone authenticated can create a call.
+      // Allow create if user is authenticated
       allow create: if request.auth.uid != null;
       
-      // Anyone can read a call document to find a pending call. This is safe
-      // as no sensitive data is stored directly on the call document itself.
-      allow read: if true;
+      // Allow read, update, delete if the user is a participant in the call
+      allow read, update, delete: if request.auth.uid in resource.data.participants;
       
-      // A user can update a call (e.g., to join it or end it) if they are a participant.
-      allow update: if request.auth.uid in resource.data.participants;
-      
-      // A user can delete a pending call if they are the one who created it.
-      allow delete: if resource.data.status == 'pending' && request.auth.uid == resource.data.participants[0];
-
       match /messages/{messageId} {
-        // A user can read messages or create a new message if they are a participant in the call.
-        allow read, create: if request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants;
-      }
-
-      match /iceCandidates/{candidateId} {
-        // A user can read or create ICE candidates if they are a participant in the call.
+        // Allow read and create if the user is a participant in the call
         allow read, create: if request.auth.uid in get(/databases/$(database)/documents/calls/$(callId)).data.participants;
       }
     }
 
     match /reports/{reportId} {
-        // Any authenticated user can create a report.
-        allow create: if request.auth.uid != null;
-        // Only admins can view reports.
-        allow read, update, delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      // Users can create reports
+      allow create: if request.auth.uid != null;
+      
+      // Admins can read/write/delete reports
+      allow read, update, delete: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
   }
 }

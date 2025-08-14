@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit, setDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit, setDoc, arrayUnion } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag } from 'lucide-react';
@@ -111,6 +111,7 @@ export function VideoCall() {
     if (pendingCalls.length > 0) {
       // Join an existing call
       const callDoc = pendingCalls[0];
+      const callDocRef = doc(db, 'calls', callDoc.id);
       setCallId(callDoc.id);
 
       pcRef.current = await createPeerConnection(callDoc.id);
@@ -122,7 +123,7 @@ export function VideoCall() {
       const answer = await pcRef.current.createAnswer();
       await pcRef.current.setLocalDescription(answer);
 
-      await updateDoc(doc(db, 'calls', callDoc.id), {
+      await updateDoc(callDocRef, {
         status: 'active',
         participants: [...callDoc.data().participants, user.uid],
         answer: { sdp: answer.sdp, type: answer.type },
@@ -143,6 +144,8 @@ export function VideoCall() {
           status: 'pending',
           startedAt: serverTimestamp(),
           offer: { sdp: offer.sdp, type: offer.type },
+          offerCandidates: [],
+          answerCandidates: [],
       });
     }
   };
@@ -155,8 +158,16 @@ export function VideoCall() {
 
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
-        const iceCandidatesRef = collection(db, 'calls', currentCallId, 'iceCandidates');
-        await addDoc(iceCandidatesRef, event.candidate.toJSON());
+        const callRef = doc(db, 'calls', currentCallId);
+        const callDoc = await getDoc(callRef);
+        const callData = callDoc.data() as Call;
+        // Determine if this client is the offerer or answerer
+        const isOfferer = callData.participants[0] === user?.uid;
+        const fieldToUpdate = isOfferer ? 'offerCandidates' : 'answerCandidates';
+
+        await updateDoc(callRef, {
+          [fieldToUpdate]: arrayUnion(event.candidate.toJSON())
+        });
       }
     };
 
@@ -168,30 +179,6 @@ export function VideoCall() {
       startAudioRecording();
     };
     
-    // Listen for ICE candidates
-    const iceCandidatesCollection = collection(db, 'calls', currentCallId, 'iceCandidates');
-    const iceCandidatesQuery = query(iceCandidatesCollection);
-    const iceUnsubscribe = onSnapshot(iceCandidatesQuery, (snapshot) => {
-      snapshot.docChanges().forEach(async (change) => {
-        if (change.type === 'added') {
-          const candidate = new RTCIceCandidate(change.doc.data());
-          // Make sure the peer connection is in a state to accept candidates
-          if (pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(candidate);
-            } catch(e) {
-              console.error('Error adding received ICE candidate', e);
-            }
-          }
-        }
-      });
-    });
-
-    // Store cleanup function
-    callCleanupRef.current = () => {
-        iceUnsubscribe();
-    }
-
     return pc;
   };
 
@@ -376,7 +363,9 @@ export function VideoCall() {
 
   // Main listener for call document changes
   useEffect(() => {
-    if (!callId) return;
+    if (!callId || !user) return;
+
+    const addedCandidates = new Set();
 
     const unsub = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
       // If doc is deleted (pending call cancelled by creator)
@@ -387,6 +376,7 @@ export function VideoCall() {
       }
 
       const data = docSnapshot.data() as Call;
+      const oldData = callData;
       setCallData(data);
 
       if (data?.status === 'active' && isFinding) {
@@ -400,6 +390,21 @@ export function VideoCall() {
       if (pcRef.current && !pcRef.current.remoteDescription && data?.answer) {
         await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
       }
+
+      // Add remote ICE candidates
+      const isOfferer = data.participants[0] === user.uid;
+      const candidatesFieldName = isOfferer ? 'answerCandidates' : 'offerCandidates';
+      const candidates = data[candidatesFieldName as keyof Call] as any[] | undefined;
+
+      if (candidates && pcRef.current?.remoteDescription) {
+        candidates.forEach(candidate => {
+          const candidateKey = JSON.stringify(candidate);
+          if (!addedCandidates.has(candidateKey)) {
+            pcRef.current!.addIceCandidate(new RTCIceCandidate(candidate));
+            addedCandidates.add(candidateKey);
+          }
+        });
+      }
     });
 
     const messagesUnsub = onSnapshot(query(collection(db, 'calls', callId, 'messages')), (snapshot) => {
@@ -407,6 +412,11 @@ export function VideoCall() {
         msgs.sort((a, b) => (a.timestamp as any) - (b.timestamp as any));
         setMessages(msgs);
     });
+
+    callCleanupRef.current = () => {
+        unsub();
+        messagesUnsub();
+    }
 
     // Main cleanup function
     return () => {
@@ -417,7 +427,7 @@ export function VideoCall() {
           hangUp();
       }
     };
-  }, [callId, isFinding, isReporting]);
+  }, [callId, isFinding, isReporting, user, callData]);
   
   const cancelFinding = async () => {
     setIsFinding(false);
