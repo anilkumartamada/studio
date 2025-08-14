@@ -1,0 +1,23 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow public creation of user documents, but only the user can modify their own document.
+    match /users/{userId} {
+      allow read, create: if true;
+      allow update, delete: if request.auth.uid == userId;
+    }
+
+    // Allow authenticated users to manage calls and messages
+    match /calls/{callId}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Allow authenticated users to create reports
+    match /reports/{reportId} {
+      allow create: if request.auth != null;
+      // Allow admins to read reports
+      allow read: if get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+  }
+}
