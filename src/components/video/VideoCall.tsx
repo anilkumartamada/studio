@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
@@ -29,7 +30,7 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card';
-import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag } from 'lucide-react';
+import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag, Mic, MicOff, VideoOff } from 'lucide-react';
 import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
@@ -48,6 +49,9 @@ export function VideoCall() {
   const [isFinding, setIsFinding] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [isReporting, setIsReporting] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -392,6 +396,24 @@ export function VideoCall() {
     }
   };
 
+  const toggleMic = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+        setIsMicMuted(!track.enabled);
+      });
+    }
+  };
+
+  const toggleCamera = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+        setIsCameraOff(!track.enabled);
+      });
+    }
+  };
+
   // ---- Reset all state and media/PC resources ----
   const resetCallState = () => {
     if (callCleanupRef.current) {
@@ -421,6 +443,8 @@ export function VideoCall() {
     setMessages([]);
     setIsFinding(false);
     setNewMessage('');
+    setIsMicMuted(false);
+    setIsCameraOff(false);
   };
 
   // ---- Chat ----
@@ -606,7 +630,25 @@ export function VideoCall() {
             <video ref={localVideoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
           </div>
         </div>
-        <div className="flex justify-center gap-4">
+        <div className="flex justify-center gap-2">
+          <Button
+            variant={isMicMuted ? 'destructive' : 'secondary'}
+            size="lg"
+            className="rounded-full"
+            onClick={toggleMic}
+          >
+            {isMicMuted ? <MicOff /> : <Mic />}
+            <span className="sr-only">{isMicMuted ? 'Unmute' : 'Mute'}</span>
+          </Button>
+          <Button
+            variant={isCameraOff ? 'destructive' : 'secondary'}
+            size="lg"
+            className="rounded-full"
+            onClick={toggleCamera}
+          >
+            {isCameraOff ? <VideoOff /> : <Video />}
+            <span className="sr-only">{isCameraOff ? 'Turn Camera On' : 'Turn Camera Off'}</span>
+          </Button>
           <Button variant="destructive" size="lg" className="rounded-full" onClick={() => hangUp()}>
             <PhoneOff />
             <span className="ml-2">Hang Up</span>
