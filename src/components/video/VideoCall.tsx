@@ -3,15 +3,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, serverTimestamp, deleteDoc, limit } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Loader2, PhoneOff, Send, Video, AlertCircle } from 'lucide-react';
+import { Loader2, PhoneOff, Send, Video, AlertCircle, Flag } from 'lucide-react';
 import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import type { Call, Message } from '@/types';
 import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
+import { transcribeCall } from '@/ai/flows/transcribe-call';
 
 export function VideoCall() {
   const { user } = useAuth();
@@ -22,13 +23,42 @@ export function VideoCall() {
   const [newMessage, setNewMessage] = useState('');
   const [isFinding, setIsFinding] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [isReporting, setIsReporting] = useState(false);
+
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioBufferRef = useRef<Float32Array[]>([]);
+  const callCleanupRef = useRef<(() => void) | null>(null);
+
+
+  useEffect(() => {
+    // Check for camera permission on component mount, but don't request it yet.
+    const checkCameraPermission = async () => {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const hasVideo = devices.some(device => device.kind === 'videoinput');
+            const stream = await navigator.mediaDevices.getUserMedia({video: hasVideo, audio: true});
+            // We got the stream, so we have permission. Stop the tracks immediately.
+            stream.getTracks().forEach(track => track.stop());
+            setHasCameraPermission(true);
+        } catch (err) {
+            setHasCameraPermission(false);
+            console.error("Initial permission check failed:", err)
+        }
+    };
+    checkCameraPermission();
+  }, []);
+
 
   const getCameraPermission = async () => {
+    if (localStreamRef.current) {
+        return localStreamRef.current;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       if (localVideoRef.current) {
@@ -49,80 +79,69 @@ export function VideoCall() {
     }
   };
 
-
   const startCall = async () => {
     if (!user) return;
-
+    
     const stream = await getCameraPermission();
     if (!stream) {
-      return;
+        return;
     }
 
     setIsFinding(true);
 
     const callsRef = collection(db, 'calls');
-    const q = query(callsRef, where('status', '==', 'pending'));
-    
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      if (!isFinding) {
-          unsubscribe();
-          return;
-      }
+    const q = query(
+      callsRef, 
+      where('status', '==', 'pending'),
+      where('participants', '!=', [user.uid]), // Firestore doesn't support != on arrays, this is a workaround for single-participant pending calls
+      limit(1)
+    );
+
+    const querySnapshot = await getDocs(q);
+    const pendingCalls = querySnapshot.docs.filter(doc => !doc.data().participants.includes(user.uid));
+
+
+    if (pendingCalls.length > 0) {
+      // Join an existing call
+      const callDoc = pendingCalls[0];
+      setCallId(callDoc.id);
+
+      pcRef.current = await createPeerConnection(callDoc.id);
+      localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
+
+      const offer = callDoc.data().offer;
+      await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
       
-      const pendingCalls = snapshot.docs.filter(doc => doc.data().participants && !doc.data().participants.includes(user.uid));
+      const answer = await pcRef.current.createAnswer();
+      await pcRef.current.setLocalDescription(answer);
+
+      await updateDoc(doc(db, 'calls', callDoc.id), {
+        status: 'active',
+        participants: [...callDoc.data().participants, user.uid],
+        answer: { sdp: answer.sdp, type: answer.type },
+      });
+    } else {
+      // Create a new call
+      const newCallDocRef = doc(callsRef); // Create a reference first to get the ID
+      setCallId(newCallDocRef.id);
+
+      pcRef.current = await createPeerConnection(newCallDocRef.id);
+      localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
       
-      if (pendingCalls.length > 0) {
-        // Join an existing call
-        const callDoc = pendingCalls[0];
-        setCallId(callDoc.id);
-        
-        pcRef.current = createPeerConnection(callDoc.id);
-        localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
+      const offer = await pcRef.current.createOffer();
+      await pcRef.current.setLocalDescription(offer);
 
-        const offer = callDoc.data().offer;
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-        
-        const answer = await pcRef.current.createAnswer();
-        await pcRef.current.setLocalDescription(answer);
-
-        await updateDoc(doc(db, 'calls', callDoc.id), {
-          status: 'active',
-          participants: [...callDoc.data().participants, user.uid],
-          answer: { sdp: answer.sdp, type: answer.type },
-        });
-
-      } else {
-        // Create a new call
-        const newCallDoc = await addDoc(callsRef, {
+      await setDoc(newCallDocRef, {
           participants: [user.uid],
           status: 'pending',
           startedAt: serverTimestamp(),
-        });
-        setCallId(newCallDoc.id);
-
-        pcRef.current = createPeerConnection(newCallDoc.id);
-        localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
-        
-        const offer = await pcRef.current.createOffer();
-        await pcRef.current.setLocalDescription(offer);
-
-        await updateDoc(newCallDoc, {
           offer: { sdp: offer.sdp, type: offer.type },
-        });
-      }
-      unsubscribe();
-    }, (error) => {
-        console.error("Error finding call: ", error);
-        toast({
-            variant: "destructive",
-            title: "Error",
-            description: "Could not find a call. Please try again."
-        });
-        setIsFinding(false);
-    });
+      });
+    }
   };
 
-  const createPeerConnection = (currentCallId: string) => {
+
+  const createPeerConnection = async (currentCallId: string) => {
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });
@@ -135,44 +154,188 @@ export function VideoCall() {
     };
 
     pc.ontrack = (event) => {
+      remoteStreamRef.current = event.streams[0];
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
       }
+      startAudioRecording();
     };
     
     // Listen for ICE candidates
     const iceCandidatesRef = collection(db, 'calls', currentCallId, 'iceCandidates');
-    onSnapshot(iceCandidatesRef, (snapshot) => {
+    const iceUnsubscribe = onSnapshot(iceCandidatesRef, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+            const candidate = new RTCIceCandidate(change.doc.data());
+            // Make sure the peer connection is in a state to accept candidates
+            if (pc.remoteDescription) {
+                pc.addIceCandidate(candidate);
+            }
         }
       });
     });
 
+    // Store cleanup function
+    callCleanupRef.current = () => {
+        iceUnsubscribe();
+    }
+
     return pc;
   };
 
-  const hangUp = async () => {
-    if (callId) {
-      const callRef = doc(db, 'calls', callId);
-      const callDoc = await getDoc(callRef);
-      if (callDoc.exists() && callDoc.data().status === 'active') {
-          await updateDoc(callRef, { status: 'ended', endedAt: serverTimestamp() });
-      } else if (callDoc.exists() && callDoc.data().status === 'pending') {
-          await deleteDoc(callRef);
-      }
+    const startAudioRecording = () => {
+        if (!remoteStreamRef.current || audioContextRef.current) return;
+        
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
+
+        const source = audioContext.createMediaStreamSource(remoteStreamRef.current);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        processor.onaudioprocess = (e) => {
+            const inputData = e.inputBuffer.getChannelData(0);
+            const buffer = new Float32Array(inputData);
+            audioBufferRef.current.push(buffer);
+        };
+    };
+
+    const stopAudioRecordingAndTranscribe = async (): Promise<string> => {
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+
+        if (audioBufferRef.current.length === 0) {
+            return "No audio was recorded.";
+        }
+
+        const totalLength = audioBufferRef.current.reduce((acc, val) => acc + val.length, 0);
+        const mergedBuffer = new Float32Array(totalLength);
+        let offset = 0;
+        audioBufferRef.current.forEach(buffer => {
+            mergedBuffer.set(buffer, offset);
+            offset += buffer.length;
+        });
+
+        // Convert Float32Array to Int16Array (PCM)
+        const pcmBuffer = new Int16Array(mergedBuffer.length);
+        for (let i = 0; i < mergedBuffer.length; i++) {
+            pcmBuffer[i] = Math.max(-1, Math.min(1, mergedBuffer[i])) * 32767;
+        }
+
+        const audioDataUri = "data:audio/pcm;base64," + Buffer.from(pcmBuffer.buffer).toString('base64');
+        audioBufferRef.current = [];
+
+        try {
+            const result = await transcribeCall({ audioDataUri });
+            return result.transcription;
+        } catch (error) {
+            console.error("Transcription failed:", error);
+            toast({
+                variant: "destructive",
+                title: "Transcription Failed",
+                description: "Could not process the call audio.",
+            });
+            return "Transcription failed.";
+        }
+    };
+
+
+  const hangUp = async (reported = false) => {
+    if (!callId) {
+        setIsFinding(false); // If hangUp is called during search
+        resetCallState();
+        return;
     }
+
+    if (!reported) { // Don't delete the call doc if it's being reported
+        const callRef = doc(db, 'calls', callId);
+        const callDoc = await getDoc(callRef);
+        if (callDoc.exists()) {
+            if (callDoc.data().status === 'active') {
+                await updateDoc(callRef, { status: 'ended', endedAt: serverTimestamp() });
+            } else if (callDoc.data().status === 'pending') {
+                await deleteDoc(callRef);
+            }
+        }
+    }
+    
     resetCallState();
   };
 
+  const reportCall = async () => {
+    if (!callId || !callData || !user) return;
+    setIsReporting(true);
+    
+    try {
+        const transcription = await stopAudioRecordingAndTranscribe();
+        
+        const otherParticipantId = callData.participants.find(p => p !== user.uid);
+        if (!otherParticipantId) {
+            throw new Error("Could not find the other participant to report.");
+        }
+
+        const report = {
+            callId: callId,
+            reporterId: user.uid,
+            reportedUserId: otherParticipantId,
+            chatHistory: messages,
+            transcription: transcription,
+            timestamp: serverTimestamp(),
+            status: 'pending',
+        };
+
+        await addDoc(collection(db, 'reports'), report);
+
+        toast({
+            title: "Report Submitted",
+            description: "Thank you. An admin will review the call shortly.",
+        });
+
+    } catch (error: any) {
+        console.error("Failed to submit report:", error);
+        toast({
+            variant: "destructive",
+            title: "Report Failed",
+            description: error.message || "Could not submit the report.",
+        });
+    } finally {
+        setIsReporting(false);
+        // We pass 'true' to indicate the call record should be preserved for the report
+        await hangUp(true); 
+    }
+};
+
+
   const resetCallState = () => {
+    // Run any specific cleanup for the call (like unsubscribing from listeners)
+    if(callCleanupRef.current) {
+        callCleanupRef.current();
+        callCleanupRef.current = null;
+    }
+    
     // Stop camera/mic tracks
     localStreamRef.current?.getTracks().forEach(track => track.stop());
     localStreamRef.current = null;
     if(localVideoRef.current) {
         localVideoRef.current.srcObject = null;
     }
+
+    // Stop remote stream tracks
+    remoteStreamRef.current?.getTracks().forEach(track => track.stop());
+    remoteStreamRef.current = null;
+    if(remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+    }
+     // Close audio context
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+    }
+    audioContextRef.current = null;
+    audioBufferRef.current = [];
 
     // Close peer connection
     pcRef.current?.close();
@@ -183,9 +346,7 @@ export function VideoCall() {
     setCallData(null);
     setMessages([]);
     setIsFinding(false);
-    if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-    }
+    setNewMessage('');
   };
 
   const sendMessage = async (e: React.FormEvent) => {
@@ -201,27 +362,31 @@ export function VideoCall() {
     setNewMessage('');
   };
 
-  // Listen for call document changes
+  // Main listener for call document changes
   useEffect(() => {
     if (!callId) return;
 
-    const unsub = onSnapshot(doc(db, 'calls', callId), (doc) => {
-      const data = doc.data() as Call;
-      // If doc is deleted (pending call cancelled)
-      if (!data) {
+    const unsub = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
+      // If doc is deleted (pending call cancelled by creator)
+      if (!docSnapshot.exists()) {
         resetCallState();
+        toast({ title: "Call Canceled", description: "The other user canceled the call." });
         return;
       }
+
+      const data = docSnapshot.data() as Call;
       setCallData(data);
+
       if (data?.status === 'active' && isFinding) {
           setIsFinding(false);
       }
-      if (data?.status === 'ended') {
+      if (data?.status === 'ended' && !isReporting) {
         toast({ title: "Call Ended", description: "The other user has left the call." });
         resetCallState();
       }
+      // For the user who created the call, set remote description when the other user answers
       if (pcRef.current && !pcRef.current.remoteDescription && data?.answer) {
-        pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
       }
     });
 
@@ -231,25 +396,25 @@ export function VideoCall() {
         setMessages(msgs);
     });
 
+    // Main cleanup function
     return () => {
       unsub();
       messagesUnsub();
+      // If the component unmounts unexpectedly, try to clean up the call state
+      if(pcRef.current || isFinding) {
+          hangUp();
+      }
     };
-  }, [callId, isFinding, toast]);
+  }, [callId]);
   
   const cancelFinding = async () => {
-      setIsFinding(false);
-      if (callId) {
-          // If a pending call document was created, delete it
-          const callRef = doc(db, 'calls', callId);
-          const callDoc = await getDoc(callRef);
-          if (callDoc.exists() && callDoc.data().status === 'pending') {
-              await deleteDoc(callRef);
-          }
-      }
-      resetCallState();
+    setIsFinding(false);
+    if (callId) {
+        // A pending call document was created, so delete it
+        await deleteDoc(doc(db, 'calls', callId));
+    }
+    resetCallState();
   };
-
 
   if (!hasCameraPermission) {
     return (
@@ -323,9 +488,13 @@ export function VideoCall() {
                 </div>
             </div>
             <div className="flex justify-center gap-4">
-                <Button variant="destructive" size="lg" className="rounded-full" onClick={hangUp}>
+                <Button variant="destructive" size="lg" className="rounded-full" onClick={() => hangUp()}>
                     <PhoneOff />
                     <span className="ml-2">Hang Up</span>
+                </Button>
+                 <Button variant="outline" size="lg" className="rounded-full" onClick={reportCall} disabled={isReporting}>
+                    {isReporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Flag />}
+                    <span className="ml-2">{isReporting ? 'Reporting...' : 'Report'}</span>
                 </Button>
             </div>
         </div>
@@ -349,7 +518,7 @@ export function VideoCall() {
             <CardFooter>
                 <form onSubmit={sendMessage} className="flex w-full gap-2">
                     <Input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Type a message..." />
-                    <Button type="submit">
+                    <Button type="submit" disabled={!callData || callData.status !== 'active'}>
                         <Send />
                     </Button>
                 </form>
