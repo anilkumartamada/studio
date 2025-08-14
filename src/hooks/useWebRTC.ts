@@ -166,20 +166,16 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
   }, [callId, resetCallState]);
 
   const cancelFinding = useCallback(async () => {
-    setIsFinding(false);
-    if (callId) {
-      const callRef = doc(db, 'calls', callId);
-      try {
-        const callDoc = await getDoc(callRef);
-        if (callDoc.exists() && callDoc.data().status === 'pending') {
-          await deleteDoc(callRef);
-        }
-      } catch (e) {
-        console.error('Could not delete pending call on cancel', e);
-      }
+    if (isFinding && callId) {
+       const callRef = doc(db, 'calls', callId);
+       const callDoc = await getDoc(callRef);
+       if (callDoc.exists() && callDoc.data().status === 'pending') {
+         await deleteDoc(callRef);
+       }
     }
+    setIsFinding(false);
     resetCallState();
-  }, [callId, resetCallState]);
+  }, [callId, isFinding, resetCallState]);
 
 
   // ---- WebRTC & Signaling Logic ----
@@ -382,3 +378,5 @@ export function useWebRTC(localVideoRef: RefObject<HTMLVideoElement>, remoteVide
     audioBufferRef
   };
 }
+
+    
