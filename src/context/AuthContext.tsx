@@ -3,7 +3,7 @@
 import { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import type { User } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import type { UserData } from '@/types';
 
@@ -37,21 +37,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (user) {
-      const userDocRef = doc(db, 'users', user.uid);
-      const unsubscribeSnapshot = onSnapshot(userDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-          setUserData(docSnap.data() as UserData);
-        } else {
-          setUserData(null);
+      const fetchUserData = async () => {
+        const userDocRef = doc(db, 'users', user.uid);
+        try {
+          const docSnap = await getDoc(userDocRef);
+          if (docSnap.exists()) {
+            setUserData(docSnap.data() as UserData);
+          } else {
+            setUserData(null);
+          }
+        } catch (error) {
+           console.error("Error fetching user data:", error);
+           setUserData(null);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
-      }, (error) => {
-        console.error("Error fetching user data:", error);
-        setUserData(null);
-        setLoading(false);
-      });
-
-      return () => unsubscribeSnapshot();
+      }
+      fetchUserData();
     }
   }, [user]);
 
