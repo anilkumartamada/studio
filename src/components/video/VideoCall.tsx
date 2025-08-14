@@ -561,5 +561,3 @@ export function VideoCall() {
     </div>
   );
 }
-
-    
