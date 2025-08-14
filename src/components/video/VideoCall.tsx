@@ -111,9 +111,7 @@ export function VideoCall() {
           if (!callDocSnapshot.exists() || callDocSnapshot.data().status !== 'pending') {
             throw new Error("Call not available");
           }
-
-          setCallId(callDocToJoin.id);
-
+          
           pcRef.current = await createPeerConnection(callDocToJoin.id);
           localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
 
@@ -129,6 +127,7 @@ export function VideoCall() {
             answer: { sdp: answer.sdp, type: answer.type },
           });
         });
+        setCallId(callDocToJoin.id);
       } catch (error) {
         console.error("Failed to join call, restarting search:", error);
         resetCallState();
@@ -139,7 +138,6 @@ export function VideoCall() {
     } else {
       // Create a new call
       const newCallDocRef = doc(collection(db, 'calls'));
-      setCallId(newCallDocRef.id);
 
       pcRef.current = await createPeerConnection(newCallDocRef.id);
       localStreamRef.current?.getTracks().forEach(track => pcRef.current?.addTrack(track, localStreamRef.current!));
@@ -155,6 +153,7 @@ export function VideoCall() {
           offerCandidates: [],
           answerCandidates: [],
       });
+      setCallId(newCallDocRef.id);
     }
   };
 
@@ -168,9 +167,6 @@ export function VideoCall() {
       if (event.candidate) {
         const callRef = doc(db, 'calls', currentCallId);
         try {
-          // We don't need to get the doc first, just try to update it.
-          // The security rules will determine if the user is a participant.
-          // This can still fail if the other user hangs up at the same time.
           const callDoc = await getDoc(callRef);
           if (callDoc.exists()) {
               const callData = callDoc.data() as Call;
@@ -383,41 +379,46 @@ export function VideoCall() {
 
     const addedCandidates = new Set();
 
-    const unsub = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
-      // If doc is deleted (pending call cancelled by creator)
+    const unsubCall = onSnapshot(doc(db, 'calls', callId), async (docSnapshot) => {
+      // If doc is deleted (e.g., pending call canceled)
       if (!docSnapshot.exists()) {
         if (isFinding) {
           // If we were still finding a match, just restart the search silently.
           resetCallState();
           setTimeout(() => startCall(), 500); // Small delay to prevent loops
-        } else {
+        } else if (callId) { // Only show toast if we were in an active call
           resetCallState();
           toast({ title: "Call Canceled", description: "The other user canceled the call." });
         }
         return;
       }
-
-      const data = docSnapshot.data() as Call;
+      
+      const newData = docSnapshot.data() as Call;
       const oldData = callData;
-      setCallData(data);
-
-      if (data?.status === 'active' && isFinding) {
-          setIsFinding(false);
+      setCallData(newData);
+      
+      // If status becomes active, stop the "finding" spinner
+      if (newData?.status === 'active' && isFinding) {
+        setIsFinding(false);
       }
-      if (data?.status === 'ended' && !isReporting) {
+      
+      // If status becomes ended and we are not in the process of reporting, end the call
+      if (newData?.status === 'ended' && !isReporting) {
         toast({ title: "Call Ended", description: "The other user has left the call." });
         resetCallState();
-      }
-      // For the user who created the call, set remote description when the other user answers
-      if (pcRef.current && !pcRef.current.remoteDescription && data?.answer) {
-        await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+        return;
       }
 
-      // Add remote ICE candidates
-      const isOfferer = data.participants[0] === user.uid;
+      // If we are the offerer and an answer comes in, set remote description
+      if (pcRef.current && !pcRef.current.remoteDescription && newData?.answer) {
+        await pcRef.current.setRemoteDescription(new RTCSessionDescription(newData.answer));
+      }
+      
+      // Add new remote ICE candidates
+      const isOfferer = newData.participants[0] === user.uid;
       const candidatesFieldName = isOfferer ? 'answerCandidates' : 'offerCandidates';
-      const candidates = data[candidatesFieldName as keyof Call] as any[] | undefined;
-
+      const candidates = newData[candidatesFieldName as keyof Call] as any[] | undefined;
+      
       if (candidates && pcRef.current?.remoteDescription) {
         candidates.forEach(candidate => {
           const candidateKey = JSON.stringify(candidate);
@@ -429,23 +430,23 @@ export function VideoCall() {
       }
     });
 
-    const messagesUnsub = onSnapshot(query(collection(db, 'calls', callId, 'messages')), (snapshot) => {
+    const unsubMessages = onSnapshot(query(collection(db, 'calls', callId, 'messages')), (snapshot) => {
         const msgs = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}) as Message);
         msgs.sort((a, b) => (a.timestamp as any) - (b.timestamp as any));
         setMessages(msgs);
     });
 
     callCleanupRef.current = () => {
-        unsub();
-        messagesUnsub();
+        unsubCall();
+        unsubMessages();
     }
 
-    // Main cleanup function
+    // Main cleanup function for this effect
     return () => {
-      unsub();
-      messagesUnsub();
+      unsubCall();
+      unsubMessages();
     };
-  }, [callId, isFinding, isReporting, user, callData]);
+  }, [callId, user]); // Rerun this whole effect if callId or user changes
   
   const cancelFinding = async () => {
     setIsFinding(false);
